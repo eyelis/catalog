@@ -4,3 +4,64 @@ Créer
 -les entités du domaine : avec tests unitaire 
 -les uses cases de l'application : avec test BDD cucumber
 - l'infrastructure  : avec spring jdbc/jdbcClient/Jooq (base sqlserver 2022), rest api, test end2end avec testcontainers avec sqlserver 2022 / schema catalog 
+
+gateway 
+
+Agis en tant qu'Expert Spring Cloud Gateway et Spring Boot 3.4.
+Génère la configuration YAML complète et propre pour le fichier `application.yml` de la Gateway pour gérer le routage du Projet OSM.
+
+### Objectif :
+Mettre en place le pattern Anti-Corruption Layer (ACL) au niveau du routage pour migrer le catalogue du Monolithe vers le microservice `osm-catalog` de manière transparente pour le Front-end legacy.
+
+### Spécifications des Routes :
+1. **Route de Transition (Migrée - osm-catalog-legacy-bridge) :**
+   - Doit intercepter les requêtes du Front legacy commençant par : `/api/subscriptions/catalogs/**`
+   - Doit appliquer le filtre personnalisé `UserSessionBridgeFilter` (déjà existant).
+   - Doit réécrire l'URL à la volée avant de l'envoyer au microservice : transformer `/api/subscriptions/catalogs/(.*)` en `/api/v1/legacy-bridge/catalogs/$1`.
+   - Doit router la requête modifiée vers le microservice `osm-catalog` via le Load Balancer Spring Cloud (ex: `lb://osm-catalog`).
+
+2. **Route Cible Future (Propre - osm-catalog-clean) :**
+   - Pour anticiper les futurs appels directs du nouveau Front, intercepter : `/api/v1/catalogs/**`
+   - Appliquer le filtre `UserSessionBridgeFilter`.
+   - Envoyer directement au microservice `lb://osm-catalog` sans réécriture de chemin.
+
+3. **Route Fallback (Non migrée - legacy-monolith) :**
+   - Tout le reste du trafic concernant les souscriptions (`/api/subscriptions/**`) qui n'est pas intercepté par la route 1 doit être envoyé tel quel, sans modification de path, vers le Monolithe Legacy (ex: `http://legacy-monolith-cluster`).
+   - Attention à l'ordre de déclaration des routes pour éviter les conflits (la route la plus précise doit être évaluée en premier).
+
+Fournis le bloc YAML `spring.cloud.gateway.routes
+
+
+
+
+
+catalog 
+
+Agis en tant qu'Expert Java 25 et Spring Boot 3.4. 
+Génère le code du contrôleur de transition et des DTOs associés dans le microservice `osm-catalog`.
+
+### Architecture cible :
+Nous appliquons le pattern Anti-Corruption Layer (ACL). La logique métier pure est isolée dans un service propre (`CatalogService`). Nous créons un contrôleur spécifique pour encaisser la dette technique du Front legacy sans polluer le reste de l'application.
+
+### Spécifications techniques à coder :
+1. **Les DTOs (via Java Records) :**
+   - `LegacyCatalogInputDto` : Représente le format "moche" envoyé par le vieux Front. Propriétés : `Long subscriptionId`, `String subscriptionType`, `String oldLabel`.
+   - `LegacyCatalogOutputDto` : Représente le format attendu en retour par le vieux Front. Propriétés : `Long subscriptionId`, `String subscriptionType`, `String oldLabel`.
+   - `CatalogCreateCommand` : Le Record "propre" attendu par votre couche métier (`CatalogService`). Propriété : `String name`.
+   - `CatalogResponse` : Le Record "propre" renvoyé par votre couche métier. Propriétés : `Long id`, `String name`.
+
+2. **Le Contrôleur Transitoire (`LegacyCatalogBridgeController`) :**
+   - Annoté avec `@RestController` et mappé sur le chemin `/api/v1/legacy-bridge/catalogs`.
+   - Injecte via constructeur une classe fictive `CatalogService` (tu peux juste générer l'interface ou une implémentation bouchonnée de ce service).
+   - Contient un `@PostMapping` qui :
+     a) Reçoit le `LegacyCatalogInputDto`.
+     b) Valide que le `subscriptionType` est bien égal à "CATALOG" (sinon renvoie une 400 Bad Request).
+     c) Convertit le DTO legacy en `CatalogCreateCommand` (en utilisant le Pattern Matching de Java 25 si applicable pour les validations/extractions).
+     d) Appelle la méthode `catalogService.createCatalog(command)`.
+     e) Convertit la réponse propre `CatalogResponse` en `LegacyCatalogOutputDto` pour ne pas casser le Front-end legacy.
+     f) Renvoyer une réponse HTTP 200 ou 201.
+
+### Contraintes :
+- Utilisez le niveau de langage de Java 25 (Records obligatoires pour les DTOs).
+- Évitez l'utilisation de frameworks de mapping complexes comme MapStruct pour ce besoin transitoire ; un mapping manuel et explicite dans le contrôleur (ou via des méthodes "factory" dans les records) est préférable pour être facilement supprimé le jour du decommissioning.
+- Fournis un code propre, modulaire et documenté.
