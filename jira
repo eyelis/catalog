@@ -1,0 +1,94 @@
+🧱 ÉPIC JIRA : Refonte du Service Coeur osm-catalog (DDD & Architecture Moderne)
+Description de l'Épic : > Implémenter le nouveau microservice osm-catalog en isolation complète du monolithe. Ce service expose des APIs REST propres (/api/v1/catalogs), garantit les invariants métier via un Agrégat Riche (Catalog + CatalogVersion) et sépare les lectures des écritures (CQRS) pour maximiser les performances de l'application sur SQL Server.
+
+🟢 STORY 1 : Modélisation du Domaine & Invariants de l'Agrégat (Écritures)
+Description : En tant que Gestionnaire de catalogue, je veux que le système applique des règles métier strictes lors des modifications de statuts, afin d'assurer l'intégrité de mes données de vente.
+
+Critères d'acceptation (BDD) : * Given un catalogue avec une version v1 au statut ACTIF, When je valide un draft v2 (PENDING_VALIDATION), Then v1 passe automatiquement à ARCHIVED et v2 passe à ACTIF. Une seule version active simultanée est tolérée.
+
+Sous-tâches Jira :
+
+🛠️ [DEV] Créer l'entité racine (Aggregate Root) Catalog immuable avec son champ CatalogType (Java 25 Record/Enum).
+
+🛠️ [DEV] Créer l'entité interne CatalogVersion avec son cycle de vie (DRAFT, PENDING_VALIDATION, ACTIF, ARCHIVED).
+
+🛠️ [DEV] Implémenter la logique métier de duplication profonde (Deep Copy) pour créer un nouveau DRAFT depuis la version ACTIF.
+
+🧪 [QA] Écrire les tests unitaires du domaine avec AssertJ (Validation des invariants sans base de données).
+
+🟢 STORY 2 : Persistance & Stratégie d'Identité avec SQL Server 2022
+Description : En tant que Système, je veux que la persistance de mon agrégat utilise des séquences d'ID dédiées et distinctes pour le catalogue et ses versions, afin de respecter notre plan de base de données.
+
+Critères d'acceptation :
+
+L'enregistrement d'un catalogue appelle la séquence SEQ_CATALOG.
+
+L'enregistrement d'une version appelle sa propre séquence indépendante SEQ_CATALOG_VERSION.
+
+La suppression d'un draft nettoie en cascade les segments de données en base (orphanRemoval = true).
+
+Sous-tâches Jira :
+
+🛠️ [DEV] Configurer l'interface unique CatalogRepository (Aucun repository standalone pour les versions).
+
+🛠️ [DEV] Associer le composant existant SequenceIdGeneratorRepository ou configurer les annotations @SequenceGenerator Hibernate.
+
+🛠️ [DEV] Configurer les cascades JPA (CascadeType.ALL) et les jointures de tables.
+
+🧪 [QA/DEV] Mettre en place un test d'intégration CatalogRepositoryIT en utilisant Testcontainers (Image SQL Server 2022 officielle).
+
+🟢 STORY 3 : API de Lecture Optimisée & Exposition REST (CQRS)
+Description : En tant que Développeur Front, je veux interroger le contenu d'une version spécifique par son ID via un endpoint performant, sans que le système n'ait à charger l'historique complet de l'agrégat en mémoire.
+
+Critères d'acceptation :
+
+L'endpoint GET /api/v1/catalogs/versions/{versionId} extrait directement les données de la table des versions.
+
+Le contrôleur supporte l'ensemble de la matrice des routes définies pour le rewrite de la Gateway.
+
+Sous-tâches Jira :
+
+🛠️ [DEV] Initialiser le contrôleur unique CatalogController mappé sur /api/v1/catalogs.
+
+🛠️ [DEV] Implémenter la route de lecture rapide (Query CQRS) via une projection Spring Data JPA ou un Java 25 Record DTO.
+
+🛠️ [DEV] Coder les endpoints de commande (PUT pour les modifications du draft, POST /.../submit pour le workflow, POST /.../validate).
+
+🧪 [QA] Valider la conformité des contrats d'API avec un outil de test (fichiers Bruno / Postman) et générer la spec OpenAPI/Swagger.
+
+🟢 STORY 4 : Sécurisation des APIs par Décodage du JWT Gateway
+Description : En tant que microservice osm-catalog, je veux valider le jeton JWT transmis par la Gateway dans le header Authorization afin d'appliquer un contrôle d'accès granulaire sur mes ressources.
+
+Critères d'acceptation :
+
+Le service rejette toute requête sans JWT ou avec un JWT expiré (TTL > 60s).
+
+Le service utilise la Map permissions du JWT pour autoriser ou interdire l'accès aux endpoints.
+
+Sous-tâches Jira :
+
+🛠️ [DEV] Configurer Spring Security pour valider la signature du JWT émis par la Gateway.
+
+🛠️ [DEV] Créer un extracteur d'autorisations personnalisé pour convertir la Map des permissions du JWT en GrantedAuthority Spring Security.
+
+🛠️ [DEV] Ajouter les annotations de sécurité @PreAuthorize sur les méthodes du contrôleur (ex: vérifier l'accès au segment lors d'un PUT).
+
+🟢 STORY 5 : CI/CD GitLab & Dockerisation du Service osm-catalog
+Description : En tant que DevOps, je veux automatiser le build et l'empaquetage du microservice sous forme d'image Docker à chaque commit sur la branche principale.
+
+Critères d'acceptation :
+
+Le pipeline compile l'application avec Java 25.
+
+L'image Docker finale est ultra-légère et sécurisée (Alpinisée).
+
+Sous-tâches Jira :
+
+🚀 [DEVOPS] Écrire le Dockerfile multi-stage optimisé pour Spring Boot 4.0.6 (Image de run : eclipse-temurin:25-jre-alpine).
+
+🚀 [DEVOPS] Configurer les jobs .gitlab-ci.yml (Build Maven avec mise en cache du .m2 + Build Kaniko pour le push vers la registry).
+
+🚀 [DEVOPS] Rédiger les manifests Kubernetes de base (deployment.yml, service.yml basés sur le DNS natif) spécifiques à osm-catalog.
+
+💡 Conseil pour ton planning de Sprint
+Pendant que ton Développeur A code les règles métiers de la Story 1, ton Développeur B peut préparer la tuyauterie de la Story 2 (Repository et séquences) ou le contrôleur de la Story 3 avec des données fictives (Mocks). Le DevOps avance sur la Story 5 dès le jour 1. L'équipe gagne un temps précieux !
