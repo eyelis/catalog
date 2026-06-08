@@ -180,3 +180,87 @@ Génère le contrôleur REST unique `/api/v1/catalogs` mappant exactement les ro
 
 ### Contraintes :
 - Code propre, non-anémique, utilisant les fonctionnalités modernes de Java 25.
+
+
+
+
+
+
+
+MINIMAL CATALOG STRUCTURE
+--------------------------------------------------------------------------------------------------
+Agis en tant qu'Architecte Logiciel Émérite et Expert Java/Spring. Génère le projet complet "nosm-catalog" en respectant STRICTEMENT les exigences d'architecture, de design et de stack technique décrites ci-dessous. Fournis l'arborescence des fichiers et le code source complet de chaque classe sans troncature.
+
+---
+
+### 1. STACK TECHNIQUE CIBLE
+- Langage : Java 25
+- Framework : Spring Boot 4.0.0
+- Accès Données : Spring Data JDBC (Pas de JPA/Hibernate !)
+- Base de données : Microsoft SQL Server 2022 (Le schéma par défaut est 'dbo')
+- Gestion de base de données : Liquibase
+- Logs & Cross-cutting : Log4j2 + Spring AOP
+- Utilitaires : Lombok
+
+---
+
+### 2. PRINCIPES DE DESIGN & ARCHITECTURE STRICTE
+- Architecture Hexagonale Stricte : Étanche et cloisonnée. ZÉRO dépendance Spring ou framework tiers (comme Lombok ou Spring Annotations) dans les packages 'domain' et 'application'.
+- Approche DDD (Domain-Driven Design) : 
+  - L'Agrégat Racine est 'Catalog' (immuable, porte son 'catalogType').
+  - L'entité interne gérant le cycle de vie et les données est 'CatalogVersion'.
+- Gestion des Transactions : L'annotation `@Transactional` de Spring est INTERDITE dans la couche 'application'. Tu dois implémenter un pattern Delegate / Wrapper dans la couche 'infrastructure.primary' ou utiliser un Decorator transactionnel Spring pour encapsuler les Use Cases.
+
+---
+
+### 3. STRUCTURE DES PACKAGES ET ENTRAÎNEMENT DU MODÈLE DE TEST
+Respecte scrupuleusement l'arborescence suivante et associe chaque niveau de test à sa cible :
+
+com.nosm.catalog
+├── domain/ (Modèle pur, Invariants, Entités, Valeurs)
+│   └── [Test ciblé] -> Tests Unitaires purs via JUnit 5
+├── application/
+│   ├── usecases/ (Inbound Ports - Interfaces)
+│   ├── ports/ (Outbound Ports - Interfaces de persistance/id)
+│   └── services/ (Implémentation des Use Cases, Orchestration)
+│       └── [Test ciblé] -> Spécifications BDD Cucumber exécutant les Use Cases
+└── infrastructure/
+    ├── config/ (Configuration Spring, AOP logs via Log4j2)
+    ├── primary/
+    │   ├── web/ (CatalogController : endpoints Create et Get)
+    │   └── tx/ (Décorateurs / Délegates pour la gestion des @Transactional Spring)
+    └── secondary/
+        ├── persistence/ (Adaptateurs Spring Data JDBC, Mappers, Repositories)
+        └── [Test ciblé] -> Tests E2E avec Testcontainers (SQL Server) + ArchUnit (Vérification de l'étanchéité hexagonale)
+
+---
+
+### 4. BASE DE DONNÉES & SCRIPT DE DÉPLOIEMENT (LIQUIBASE & DOCKER)
+- Schéma cible à créer : 'catalog' (SQL Server utilise 'dbo' par défaut, le script doit s'assurer que le schéma 'catalog' existe).
+- Table 'catalog' : id (Généré par SEQUENCE dédiée), type, date_creation.
+- Table 'catalog_version' : id (Généré par SEQUENCE version dédiée), catalog_id (FK), nom, description, currency, date_activation, date_creation, date_modification.
+
+Fournis :
+1. Les fichiers de changelog Liquibase (XML ou YAML).
+2. Un fichier 'docker-compose.yml' montant un SQL Server 2022.
+3. Un script de commande (.cmd ou .sh) IDEMPOTENT qui attend le démarrage du conteneur Docker, crée le schéma 'catalog' si nécessaire, et applique Liquibase pour instancier les tables et séquences.
+
+---
+
+### 5. CODE APPLICATIF REQUIS (MÉTHODES CLÉS)
+Génère le code complet pour :
+- `CatalogController` :
+  - `POST /api/v1/catalogs` : Initialise le Master Catalogue et sa première version au statut DRAFT de manière conjointe.
+  - `GET /api/v1/catalogs/versions/{versionId}` : Récupère les détails d'une version spécifique de catalogue par son ID technique.
+
+---
+
+### 6. COUVERTURE DE TEST ATTENDUE
+Génère le code complet des tests suivants :
+
+1. ARCHUNIT TEST : Un test vérifiant que la couche 'domain' et 'application' ne dépendent pas du package 'infrastructure' ni de 'org.springframework'.
+2. JUNIT 5 DOMAIN TEST : Validation des invariants métier sur la création de la racine d'agrégat.
+3. CUCUMBER BDD TEST : Fournis le fichier `.feature` unifié et les classes Java de `StepDefinitions` associées pour les deux scénarios suivants :
+   - Scénario 1 : Création réussie d'un catalogue avec sa version initiale au statut DRAFT (Vérification des incréments de séquences).
+   - Scénario 2 : Récupération (GET) d'une version de catalogue existante.
+4. E2E TEST (TESTCONTAINERS) : Un test d'intégration global utilisant Testcontainers pour démarrer un SQL Server 2022 réel, appliquant le script Liquibase pour initialiser le schéma et injecter le jeu de données de test avant d'exécuter un appel HTTP simulé (via RestTemplate ou MockMvc) sur le contrôleur.
